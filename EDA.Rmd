@@ -1,0 +1,227 @@
+---
+title: "EDA on heart.csv"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+library(skimr)
+library(ggplot2)
+library(corrplot)
+library(ggpubr)
+library(ggcorrplot)
+library(caret)
+```
+
+```{r}
+data <- read.csv("C:/Users/Anik Das/Downloads/heart.csv")
+```
+
+
+```{r}
+Heartrate <- data %>% 
+        mutate(sex = if_else(sex == 1,"MALE","FEMALE"),
+              fbs = if_else (fbs == 1 ,">120", "<=120"),
+              exang = if_else (exang == 1 ,"YES", "NO"),
+               cp = if_else (cp == 0, "TYPICAL", if_else(cp == 1, "ATYPICAL ANGINA",
+                            if_else(cp == 2, "NON-ANGINAL PAIN", "ASYMPTOMATIC"))),
+               restecg = if_else(restecg == 0, "NORMAL",
+                                if_else(restecg == 1, "ABNORMALITY", "PROBABLE OR DEFINITE")),
+               slope = as.factor(slope),
+               ca = as.factor(ca),
+               thal = as.factor(thal),
+               target = if_else(target ==1 ,"YES","NO")) %>%
+    mutate_if(is.character, as.factor)%>%
+    dplyr::select(target,sex,fbs,exang,cp,restecg,slope,ca,thal,everything())
+```
+
+
+```{r}
+glimpse(Heartrate)
+```
+
+```{r}
+library(skimr)
+skimr::skim(Heartrate)
+```
+
+```{r}
+summary(Heartrate)
+```
+
+# Visualize distributions
+
+## Categorical Variables
+```{r}
+ggplot(Heartrate, aes(x = target, fill = target)) + 
+    geom_bar()+
+    labs(x = "Heart Disease",
+         y = "count",
+         title = "Presence & Absence of Heart disease") +
+    coord_cartesian(ylim = c(0, 200)) +
+    scale_fill_discrete(name= 'Heart Disease', labels =c("Absence", "Presence")) +
+    theme_bw()
+```
+
+
+```{r}
+round(prop.table(table(Heartrate$target)), 3)
+```
+
+
+```{r}
+age_target <- Heartrate %>%
+  group_by(age) %>%
+  count(target)
+
+ggplot(data = Heartrate, mapping = aes(x = age, fill = target)) +
+  geom_bar() +
+  labs(x = "Age",
+       y = "Count",
+       fill = "Target",
+       title = "Age Analysis") +
+  scale_fill_discrete(name= 'Heart Disease', labels =c("Absence", "Presence")) +
+  theme_bw() +
+  scale_fill_manual(values=c("#009E73", "#D55E00"))
+```
+
+
+```{r}
+age_cp <- Heartrate %>%
+  filter(target == "YES") %>%
+  group_by(age) %>%
+  count(cp)
+
+  ggplot(data = Heartrate, mapping = aes(x= age, fill = cp)) + 
+     geom_bar() +
+     labs(x = "Age",
+          y = "Count",
+          title = "Age Analysis for various chest pain conditions") +
+     scale_fill_discrete(name = "Chest pain type")
+     theme_bw()
+```
+
+
+
+```{r}
+options(repr.plot.width = 20, repr.plot.height = 8) 
+
+Heartrate %>% 
+  ggballoonplot(x = "age", y = "sex",size = "chol", size.range = c(0, 10), 
+                fill = "target", show.label = FALSE, ggtheme = theme_bw()) +
+              scale_fill_viridis_d(option = "E") +
+              scale_fill_discrete(name= 'Heart Disease', labels =c("Absence",                                           "Presence")) +
+              labs(title = "Age vs Gender")
+              
+```
+
+
+# Detecting the outliers
+```{r}
+ggplot(data = Heartrate, mapping  = aes(x = sex, y = trestbps)) +
+    geom_boxplot(fill= 'lightgreen') +
+    facet_grid(~ cp) +
+    labs(x = "Gender",
+         y = "BP",
+         title = "Box Plot of BP for each Gender") +
+    theme_bw()
+```
+
+
+```{r}
+ggplot(data = Heartrate, mapping  = aes(x = sex, y = chol)) +
+    geom_boxplot(fill= 'lightblue') +
+    facet_grid(~ cp) +
+    labs(x = "Gender",
+         y = "Cholestoral",
+         title = "Box Plot of Cholestoral for each Gender") +
+    theme_bw()
+```
+
+# Correlation Plot
+```{r}
+cor.heart <- cor(Heartrate[,10:14])
+cor.heart
+
+ggcorrplot(corr.heart, method = "square", type = "lower", ggtheme = ggplot2::theme_bw,   title = "Correlation Plot", show.legend = TRUE, legend.title = "Corr", show.diag =     TRUE, colors = c("#EA3812","#10EC35", "#66F1E0"), outline.color = "black",
+  hc.order = FALSE, hc.method = "complete", lab = TRUE,
+  lab_col = "brown", lab_size = 3, tl.cex = 12, tl.col = "black", tl.srt = 90,
+  digits = 2)
+```
+
+```{r}
+library(rsample)
+Heartrate_spilt <- initial_split(Heartrate)
+Heartrate_train <- training(Heartrate_spilt)
+Heartrate_test <- testing(Heartrate_spilt)
+model <- glm(target ~ ., data = Heartrate_train, family = binomial)
+pred <- predict(model, newdata = Heartrate_test, type = "response")
+pred_ty <- if_else(pred > 0.5, 1, 0)
+pred_ty
+test_target <- if_else(Heartrate_test[,"target"] == "YES", 1, 0)
+sum(pred_ty == 1)
+ConfMat <- confusionMatrix(as.factor(pred_ty), as.factor(test_target))
+ConfMat$overall['Accuracy']
+```
+
+```{r}
+library("ROCR")
+pred <- predict(model, newdata = Heartrate_test, type = "response")
+pred_y <- prediction(pred, Heartrate_test$target)
+per = performance(pred_y, "tpr", "fpr")
+plot(per, main="ROC Curve")
+
+library("pROC")
+glm_res = predict(model, Heartrate_test, type="response")
+AUC = roc(response = Heartrate_test$target, predictor = glm_res)
+AUC
+```
+
+```{r}
+model <- glm(target ~ ., data = Heartrate_train, family = binomial(link="probit"))
+pred <- predict(model, newdata = Heartrate_test, type = "response")
+pred_ty <- if_else(pred > 0.5, 1, 0)
+test_target <- if_else(Heartrate_test[,"target"] == "YES", 1, 0)
+ConfMat <- confusionMatrix(as.factor(pred_ty), as.factor(test_target))
+ConfMat$overall['Accuracy']
+```
+
+
+```{r}
+library("ROCR")
+pred <- predict(model, newdata = Heartrate_test, type = "response")
+pred_y <- prediction(pred, Heartrate_test$target)
+per = performance(pred_y, "tpr", "fpr")
+plot(per, main="ROC Curve")
+
+library("pROC")
+glm_res = predict(model, Heartrate_test, type="response")
+AUC = roc(response = Heartrate_test$target, predictor = glm_res)
+AUC
+```
+
+
+```{r}
+model <- glm(target ~ ., data = Heartrate_train, family = binomial(link="cloglog"))
+pred <- predict(model, newdata = Heartrate_test, type = "response")
+pred_ty <- if_else(pred > 0.5, 1, 0)
+test_target <- if_else(Heartrate_test[,"target"] == "YES", 1, 0)
+ConfMat <- confusionMatrix(as.factor(pred_ty), as.factor(test_target))
+ConfMat$overall['Accuracy']
+```
+
+```{r}
+library("ROCR")
+pred <- predict(model, newdata = Heartrate_test, type = "response")
+pred_y <- prediction(pred, Heartrate_test$target)
+per = performance(pred_y, "tpr", "fpr")
+plot(per, main="ROC Curve")
+
+library("pROC")
+glm_res = predict(model, Heartrate_test, type="response")
+AUC = roc(response = Heartrate_test$target, predictor = glm_res)
+AUC
+```
+
